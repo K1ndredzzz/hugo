@@ -1,0 +1,7 @@
+baseURL = 'https://hugo-smoky-zeta.vercel.app/'
+languageCode = 'en-us'
+title = 'My Awesome Site' 
+
+# 这里的名称必须和 `themes` 文件夹下的主题目录名一致
+# 例如，如果是 themes/LoveIt，这里就写 "LoveIt"
+theme = 'LoveIt' 
