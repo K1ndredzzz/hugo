@@ -54,7 +54,7 @@ h1 {
 	@apply text-2xl font-bold;
 }
 
--- config.toml --
+-- hugo.toml --
 disablekinds = ['taxonomy', 'term', 'page']
 baseURL = "https://example.com"
 [build]
@@ -68,7 +68,7 @@ hello:
 -- i18n/fr.yaml --
 hello:
    other: "Bonjour"
--- layouts/index.html --
+-- layouts/home.html --
 {{ $options := dict "inlineImports" true }}
 {{ $styles := resources.Get "css/styles.css" | css.PostCSS $options }}
 Styles RelPermalink: {{ $styles.RelPermalink }}

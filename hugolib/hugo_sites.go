@@ -17,16 +17,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bep/logg"
+	"github.com/gohugoio/go-radix"
 	"github.com/gohugoio/hugo/cache/dynacache"
 	"github.com/gohugoio/hugo/config/allconfig"
-	"github.com/gohugoio/hugo/hugofs/glob"
+	"github.com/gohugoio/hugo/hugofs/hglob"
 	"github.com/gohugoio/hugo/hugolib/doctree"
+	"github.com/gohugoio/hugo/hugolib/sitesmatrix"
 	"github.com/gohugoio/hugo/resources"
 
 	"github.com/fsnotify/fsnotify"
@@ -34,6 +37,7 @@ import (
 	"github.com/gohugoio/hugo/output"
 	"github.com/gohugoio/hugo/parser/metadecoders"
 
+	"github.com/gohugoio/hugo/common/hsync"
 	"github.com/gohugoio/hugo/common/htime"
 	"github.com/gohugoio/hugo/common/hugo"
 	"github.com/gohugoio/hugo/common/maps"
@@ -47,14 +51,20 @@ import (
 	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/deps"
 	"github.com/gohugoio/hugo/helpers"
-	"github.com/gohugoio/hugo/lazy"
 
 	"github.com/gohugoio/hugo/resources/page"
 )
 
 // HugoSites represents the sites to build. Each site represents a language.
 type HugoSites struct {
+	// The current sites slice.
+	// When rendering, this slice will be shifted out.
 	Sites []*Site
+
+	// All sites for all versions and roles.
+	sitesVersionsRoles    [][][]*Site
+	sitesVersionsRolesMap map[sitesmatrix.Vector]*Site
+	sitesLanguages        []*Site // sample set with all languages.
 
 	Configs *allconfig.Configs
 
@@ -77,7 +87,7 @@ type HugoSites struct {
 	// Cache for page listings.
 	cachePages *dynacache.Partition[string, page.Pages]
 	// Cache for content sources.
-	cacheContentSource *dynacache.Partition[string, *resources.StaleValue[[]byte]]
+	cacheContentSource *dynacache.Partition[uint64, *resources.StaleValue[[]byte]]
 
 	// Before Hugo 0.122.0 we managed all translations in a map using a translationKey
 	// that could be overridden in front matter.
@@ -86,7 +96,9 @@ type HugoSites struct {
 	// be relatively rare and low volume.
 	translationKeyPages *maps.SliceCache[page.Page]
 
-	pageTrees *pageTrees
+	pageTrees                    *pageTrees
+	previousPageTreesWalkContext *doctree.WalkContext[contentNode]    // Set for rebuilds only.
+	previousSeenTerms            *maps.Map[term, sitesmatrix.Vectors] // Set for rebuilds only.
 
 	printUnusedTemplatesInit sync.Once
 	printPathWarningsInit    sync.Once
@@ -124,6 +136,57 @@ func (p *progressReporter) Start() {
 	p.t = htime.Now()
 }
 
+func (h *HugoSites) allSites(include func(s *Site) bool) iter.Seq[*Site] {
+	return func(yield func(s *Site) bool) {
+		for _, v := range h.sitesVersionsRoles {
+			for _, r := range v {
+				for _, s := range r {
+					if include != nil && !include(s) {
+						continue
+					}
+					if !yield(s) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// allSiteLanguages will range over the first site in each language that's not skipped.
+func (h *HugoSites) allSiteLanguages(include func(s *Site) bool) iter.Seq[*Site] {
+	return func(yield func(s *Site) bool) {
+	LOOP:
+		for _, v := range h.sitesVersionsRoles {
+			for _, r := range v {
+				for _, s := range r {
+					if include != nil && !include(s) {
+						continue LOOP
+					}
+					if !yield(r[0]) {
+						return
+					}
+					continue LOOP
+				}
+			}
+		}
+	}
+}
+
+func (h *HugoSites) getFirstTaxonomyConfig(s string) (v viewName) {
+	for _, ss := range h.sitesLanguages {
+		if v = ss.pageMap.cfg.getTaxonomyConfig(s); !v.IsZero() {
+			return
+		}
+	}
+	return
+}
+
+// returns one of the sites with the language of the given vector.
+func (h *HugoSites) languageSiteForSiteVector(v sitesmatrix.Vector) *Site {
+	return h.sitesLanguages[v.Language()]
+}
+
 // ShouldSkipFileChangeEvent allows skipping filesystem event early before
 // the build is started.
 func (h *HugoSites) ShouldSkipFileChangeEvent(ev fsnotify.Event) bool {
@@ -140,18 +203,20 @@ func (h *HugoSites) isRebuild() bool {
 	return h.buildCounter.Load() > 0
 }
 
-func (h *HugoSites) resolveSite(lang string) *Site {
-	if lang == "" {
-		lang = h.Conf.DefaultContentLanguage()
-	}
-
-	for _, s := range h.Sites {
-		if s.Lang() == lang {
-			return s
+func (h *HugoSites) resolveFirstSite(matrix sitesmatrix.VectorStore) *Site {
+	var s *Site
+	var ok bool
+	matrix.ForEachVector(func(v sitesmatrix.Vector) bool {
+		if s, ok = h.sitesVersionsRolesMap[v]; ok {
+			return false
 		}
+		return true
+	})
+	if s == nil {
+		panic(fmt.Sprintf("no site found for matrix %s", matrix))
 	}
 
-	return nil
+	return s
 }
 
 type buildCounters struct {
@@ -201,14 +266,14 @@ func (f *fatalErrorHandler) Done() <-chan bool {
 
 type hugoSitesInit struct {
 	// Loads the data from all of the /data folders.
-	data *lazy.Init
+	data hsync.FuncResetter
 
 	// Loads the Git info and CODEOWNERS for all the pages if enabled.
-	gitInfo *lazy.Init
+	gitInfo hsync.FuncResetter
 }
 
 func (h *HugoSites) Data() map[string]any {
-	if _, err := h.init.data.Do(context.Background()); err != nil {
+	if err := h.init.data.Do(context.Background()); err != nil {
 		h.SendError(fmt.Errorf("failed to load data: %w", err))
 		return nil
 	}
@@ -251,7 +316,7 @@ func (h *HugoSites) RegularPages() page.Pages {
 }
 
 func (h *HugoSites) gitInfoForPage(p page.Page) (*source.GitInfo, error) {
-	if _, err := h.init.gitInfo.Do(context.Background()); err != nil {
+	if err := h.init.gitInfo.Do(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -263,7 +328,7 @@ func (h *HugoSites) gitInfoForPage(p page.Page) (*source.GitInfo, error) {
 }
 
 func (h *HugoSites) codeownersForPage(p page.Page) ([]string, error) {
-	if _, err := h.init.gitInfo.Do(context.Background()); err != nil {
+	if err := h.init.gitInfo.Do(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -443,7 +508,7 @@ func (h *HugoSites) loadGitInfo() error {
 }
 
 // Reset resets the sites and template caches etc., making it ready for a full rebuild.
-func (h *HugoSites) reset(config *BuildCfg) {
+func (h *HugoSites) reset() {
 	h.fatalErrorHandler = &fatalErrorHandler{
 		h:     h,
 		donec: make(chan bool),
@@ -469,11 +534,14 @@ func (h *HugoSites) withSite(fn func(s *Site) error) error {
 
 func (h *HugoSites) withPage(fn func(s string, p *pageState) bool) {
 	h.withSite(func(s *Site) error {
-		w := &doctree.NodeShiftTreeWalker[contentNodeI]{
+		w := &doctree.NodeShiftTreeWalker[contentNode]{
 			Tree:     s.pageMap.treePages,
 			LockType: doctree.LockTypeRead,
-			Handle: func(s string, n contentNodeI, match doctree.DimensionFlag) (bool, error) {
-				return fn(s, n.(*pageState)), nil
+			Handle: func(s string, n contentNode) (radix.WalkFlag, error) {
+				if fn(s, n.(*pageState)) {
+					return radix.WalkStop, nil
+				}
+				return radix.WalkContinue, nil
 			},
 		}
 		return w.Walk(context.Background())
@@ -498,7 +566,7 @@ type BuildCfg struct {
 	RecentlyTouched *types.EvictingQueue[string]
 
 	// Can be set to build only with a sub set of the content source.
-	ContentInclusionFilter *glob.FilenameFilter
+	ContentInclusionFilter *hglob.FilenameFilter
 
 	// Set when the buildlock is already acquired (e.g. the archetype content builder).
 	NoBuildLock bool
@@ -580,7 +648,7 @@ func (h *HugoSites) loadData() error {
 			Fs:         h.PathSpec.BaseFs.Data.Fs,
 			IgnoreFile: h.SourceSpec.IgnoreFile,
 			PathParser: h.Conf.PathParser(),
-			WalkFn: func(path string, fi hugofs.FileMetaInfo) error {
+			WalkFn: func(ctx context.Context, path string, fi hugofs.FileMetaInfo) error {
 				if fi.IsDir() {
 					return nil
 				}
@@ -610,9 +678,9 @@ func (h *HugoSites) handleDataFile(r *source.File) error {
 	// Crawl in data tree to insert data
 	current = h.data
 	dataPath := r.FileInfo().Meta().PathInfo.Unnormalized().Dir()[1:]
-	keyParts := strings.Split(dataPath, "/")
+	keyParts := strings.SplitSeq(dataPath, "/")
 
-	for _, key := range keyParts {
+	for key := range keyParts {
 		if key != "" {
 			if _, ok := current[key]; !ok {
 				current[key] = make(map[string]any)

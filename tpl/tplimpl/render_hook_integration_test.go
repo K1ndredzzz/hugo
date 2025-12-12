@@ -28,9 +28,9 @@ func TestEmbeddedLinkRenderHook(t *testing.T) {
 disableKinds = ['rss','sitemap','taxonomy','term']
 [markup.goldmark.renderHooks.link]
 enableDefault = true
--- layouts/_default/list.html --
+-- layouts/list.html --
 {{ .Content }}
--- layouts/_default/single.html --
+-- layouts/single.html --
 {{ .Content }}
 -- assets/a.txt --
 irrelevant
@@ -143,7 +143,7 @@ func TestEmbeddedImageRenderHook(t *testing.T) {
 	t.Parallel()
 
 	files := `
--- config.toml --
+-- hugo.toml --
 baseURL = 'https://example.org/dir/'
 disableKinds = ['home','rss','section','sitemap','taxonomy','term']
 [markup.goldmark.extensions.typographer]
@@ -168,7 +168,7 @@ enableDefault = true
 {id="\"><script>alert()</script>"}
 -- content/p1/pixel.png --
 iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
--- layouts/_default/single.html --
+-- layouts/single.html --
 {{ .Content }}
 `
 

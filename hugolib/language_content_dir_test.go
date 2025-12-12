@@ -44,7 +44,7 @@ file 1 en
 file 2 en
 -- content/nn/myfiles/file1.txt --
 file 1 nn
--- layouts/index.html --
+-- layouts/home.html --
 Title: {{ .Title }}|
 Len Resources: {{ len .Resources }}|
 {{ range $i, $e := .Resources }}
@@ -61,7 +61,7 @@ func TestContentMountMerge(t *testing.T) {
 	t.Parallel()
 
 	files := `
--- config.toml --
+-- hugo.toml --
 baseURL = 'https://example.org/'
 languageCode = 'en-us'
 title = 'Hugo Forum Topic #37225'
@@ -164,12 +164,7 @@ title: "p4 theme (nl)"
 ---
 `
 
-	b := NewIntegrationTestBuilder(
-		IntegrationTestConfig{
-			T:           t,
-			TxtarString: files,
-		},
-	).Build()
+	b := Test(t, files)
 
 	b.AssertFileContent("public/nl/index.html", `home (nl): nl: p1 (nl)|p2 (en)|p3 (nl)|p4 theme (nl)|:END`)
 	b.AssertFileContent("public/de/index.html", `home (de): de: p1 (de)|p2 (en)|p3 (en)|:END`)
@@ -237,6 +232,6 @@ title: p1 (es)
 	b.AssertFileExists("public/es/p1/index.html", true)
 	b.AssertFileExists("public/es/p2/index.html", true)
 
-	b.AssertLogContains("INFO  Duplicate")
-	b.AssertLogContains("! WARN  Duplicate")
+	// This assertion was changed for 0.152.0. It was no longer possible/practical to warn about duplicate content paths.
+	b.AssertLogContains("! Duplicate")
 }

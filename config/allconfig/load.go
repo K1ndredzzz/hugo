@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/gobwas/glob"
@@ -31,7 +32,7 @@ import (
 	"github.com/gohugoio/hugo/common/types"
 	"github.com/gohugoio/hugo/config"
 	"github.com/gohugoio/hugo/helpers"
-	hglob "github.com/gohugoio/hugo/hugofs/glob"
+	hglob "github.com/gohugoio/hugo/hugofs/hglob"
 	"github.com/gohugoio/hugo/modules"
 	"github.com/gohugoio/hugo/parser/metadecoders"
 	"github.com/spf13/afero"
@@ -44,6 +45,7 @@ func LoadConfig(d ConfigSourceDescriptor) (configs *Configs, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("failed to load config: %v", r)
+			debug.PrintStack()
 		}
 	}()
 
@@ -93,7 +95,7 @@ func LoadConfig(d ConfigSourceDescriptor) (configs *Configs, err error) {
 	configs.Modules = moduleConfig.AllModules
 	configs.ModulesClient = modulesClient
 
-	if err := configs.Init(); err != nil {
+	if err := configs.Init(d.Logger); err != nil {
 		return nil, fmt.Errorf("failed to init config: %w", err)
 	}
 
@@ -218,8 +220,8 @@ func (l configLoader) applyOsEnvOverrides(environ []string) error {
 	var hugoEnv []types.KeyValueStr
 	for _, v := range environ {
 		key, val := config.SplitEnvVar(v)
-		if strings.HasPrefix(key, hugoEnvPrefix) {
-			delimiterAndKey := strings.TrimPrefix(key, hugoEnvPrefix)
+		if after, ok := strings.CutPrefix(key, hugoEnvPrefix); ok {
+			delimiterAndKey := after
 			if len(delimiterAndKey) < 2 {
 				continue
 			}

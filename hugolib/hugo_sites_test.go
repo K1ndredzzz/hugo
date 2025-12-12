@@ -27,7 +27,7 @@ weight = 1
 weight = 2
 [languages.de]
 weight = 3
--- layouts/index.html --
+-- layouts/home.html --
 {{ $bundle := site.GetPage "bundle" }}
 Bundle all translations: {{ range $bundle.AllTranslations }}{{ .Lang }}|{{ end }}$
 Bundle translations: {{ range $bundle.Translations }}{{ .Lang }}|{{ end }}$
@@ -53,6 +53,32 @@ title: "Bundle De"
 		"Bundle all translations: en|fr|de|$",
 		"Bundle translations: fr|de|$",
 		"Site languages: en|fr|de|$",
-		"Sites: fr|en|de|$",
+		"Sites: en|fr|de|$",
 	)
+}
+
+func TestSitesOrder(t *testing.T) {
+	files := `
+-- hugo.toml --
+defaultContentLanguage = "fr"
+defaultContentLanguageInSubdir = true
+[languages]
+[languages.en]
+weight = 1
+[languages.fr]
+weight = 2
+[languages.de]
+weight = 3
+[roles]
+[roles.guest]
+weight = 1
+[roles.member]
+weight = 2
+-- layouts/home.html --
+Sites: {{ range site.Sites }}{{ .Language.Lang }}|{{ end }}$
+Languages: {{ range site.Languages }}{{ .Lang }}|{{ end }}
+`
+	b := Test(t, files)
+	// Note that before v0.152.0 the order of these slices where different .Sites pulled the defaultContentLanguage first.
+	b.AssertFileContent("public/en/index.html", "Sites: en|fr|de|$", "Languages: en|fr|de|")
 }

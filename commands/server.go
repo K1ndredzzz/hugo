@@ -49,6 +49,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/common/hugo"
+	"github.com/gohugoio/hugo/common/paths"
+	"github.com/gohugoio/hugo/langs"
 	"github.com/gohugoio/hugo/tpl/tplimpl"
 
 	"github.com/gohugoio/hugo/common/types"
@@ -369,6 +371,12 @@ func (f *fileServer) createEndpoint(i int) (*http.ServeMux, net.Listener, string
 
 			if f.c.fastRenderMode && f.c.errState.buildErr() == nil {
 				if isNavigation(requestURI, r) {
+					// See issue 14240.
+					// Hugo escapes the URL paths when generating them,
+					// that may not be the case when we receive it back from the browser.
+					// PathEscape will escape if it is not already escaped.
+					requestURI = paths.PathEscape(requestURI)
+
 					if !f.c.visitedURLs.Contains(requestURI) {
 						// If not already on stack, re-render that single page.
 						if err := f.c.partialReRender(requestURI); err != nil {
@@ -491,9 +499,7 @@ func (c *serverCommand) Run(ctx context.Context, cd *simplecobra.Commandeer, arg
 
 		watchGroups := helpers.ExtractAndGroupRootPaths(watchDirs)
 
-		for _, group := range watchGroups {
-			c.r.Printf("Watching for changes in %s\n", group)
-		}
+		c.r.Printf("Watching for changes in %s\n", strings.Join(watchGroups, ", "))
 		watcher, err := c.newWatcher(c.r.poll, watchDirs...)
 		if err != nil {
 			return err
@@ -627,7 +633,7 @@ func (c *serverCommand) setServerInfoInConfig() error {
 		panic("no server ports set")
 	}
 	return c.withConfE(func(conf *commonConfig) error {
-		for i, language := range conf.configs.LanguagesDefaultFirst {
+		for i, language := range conf.configs.Languages {
 			isMultihost := conf.configs.IsMultihost
 			var serverPort int
 			if isMultihost {
@@ -879,7 +885,7 @@ func (c *serverCommand) serve() error {
 		if isMultihost {
 			for _, l := range conf.configs.ConfigLangs() {
 				baseURLs = append(baseURLs, l.BaseURL())
-				roots = append(roots, l.Language().Lang)
+				roots = append(roots, l.Language().(*langs.Language).Lang)
 			}
 		} else {
 			l := conf.configs.GetFirstLanguageConfig()
@@ -1034,7 +1040,6 @@ func (c *serverCommand) serve() error {
 	defer cancel()
 	wg2, ctx := errgroup.WithContext(ctx)
 	for _, srv := range servers {
-		srv := srv
 		wg2.Go(func() error {
 			return srv.Shutdown(ctx)
 		})

@@ -28,7 +28,7 @@ func TestCommentShortcode(t *testing.T) {
 	files := `
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 -- content/_index.md --
 ---
@@ -48,7 +48,7 @@ func TestDetailsShortcode(t *testing.T) {
 	files := `
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 -- content/_index.md --
 ---
@@ -116,7 +116,7 @@ title: home
   attr="an _emphasized_ word"
   attrlink="https://example.org/foo"
 >}}
--- layouts/index.html --
+-- layouts/home.html --
 Hash: {{ .Content | hash.XxHash }}
 Content: {{ .Content }}
 `
@@ -131,7 +131,7 @@ func TestGistShortcode(t *testing.T) {
 	files := `
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 -- content/_index.md --
 ---
@@ -151,7 +151,7 @@ func TestHighlightShortcode(t *testing.T) {
 	files := `
 -- hugo.toml --
 disableKinds = ['home','rss','section','sitemap','taxonomy','term']
--- layouts/_default/single.html --
+-- layouts/single.html --
 Hash: {{ .Content | hash.XxHash }}
 Content: {{ .Content }}
 -- content/p1.md --
@@ -250,7 +250,7 @@ privacy.instagram.simple = false
 title: home
 ---
 {{< instagram CxOWiQNP2MO >}}
--- layouts/index.html --
+-- layouts/home.html --
 Hash: {{ .Content | hash.XxHash }}
 Content: {{ .Content }}
 `
@@ -273,7 +273,7 @@ func TestParamShortcode(t *testing.T) {
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
 [params]
 b = 2
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 -- content/_index.md --
 ---
@@ -300,7 +300,7 @@ func TestQRShortcode(t *testing.T) {
 	files := `
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 -- content/_index.md --
 ---
@@ -346,11 +346,11 @@ weight = 1
 weight = 2
 [outputs]
 page = ['html','json']
--- layouts/_default/home.html --
+-- layouts/home.html --
 {{ .Content }}
--- layouts/_default/single.html.html --
+-- layouts/single.html.html --
 {{ .Title }}
--- layouts/_default/single.json.json --
+-- layouts/single.json.json --
 {{ .Title }}
 -- content/_index.en.md --
 ---
@@ -411,11 +411,11 @@ weight = 1
 weight = 2
 [outputs]
 page = ['html','json']
--- layouts/_default/home.html --
+-- layouts/home.html --
 {{ .Content }}
--- layouts/_default/single.html.html --
+-- layouts/single.html.html --
 {{ .Title }}
--- layouts/_default/single.json.json --
+-- layouts/single.json.json --
 {{ .Title }}
 -- content/_index.en.md --
 ---
@@ -482,7 +482,7 @@ title: p2
 title: p3
 ---
 {{< vimeo id=55073825 allowFullScreen=false >}}
--- layouts/_default/single.html --
+-- layouts/single.html --
 Hash: {{ .Content | hash.XxHash }}
 Content: {{ .Content }}
 `
@@ -539,7 +539,7 @@ title: p4
 title: p5
 ---
 {{< twitter_simple user="SanDiegoZoo" id="1453110110599868418" >}}
--- layouts/_default/single.html --
+-- layouts/single.html --
 {{ .Content | strings.TrimSpace | safeHTML }}
 --
 `
@@ -638,7 +638,7 @@ title: home
 {{< x_simple user="__user_does_not_exist__" id="__id_does_not_exist__" >}}
 {{< twitter user="__user_does_not_exist__" id="__id_does_not_exist__" >}}
 {{< twitter_simple user="__user_does_not_exist__" id="__id_does_not_exist__" >}}
--- layouts/index.html --
+-- layouts/home.html --
 {{ .Content }}
 `
 
@@ -659,7 +659,7 @@ func TestYouTubeShortcode(t *testing.T) {
 -- hugo.toml --
 disableKinds = ['home','rss','section','sitemap','taxonomy','term']
 privacy.youtube.privacyEnhanced = false
--- layouts/_default/single.html --
+-- layouts/single.html --
 Hash: {{ .Content | hash.XxHash }}
 Content: {{ .Content }}
 -- content/p1.md --
@@ -793,4 +793,68 @@ myshortcode.en.html
 
 	b.AssertFileContent("public/pl/index.html", "myshortcode.html")
 	b.AssertFileContent("public/en/index.html", "myshortcode.en.html")
+}
+
+func TestHasShortcodeSamePageSourceDifferentShortcodes(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+disableKinds = ['home','rss','section','sitemap','taxonomy','term', '404']
+defaultContentLanguage = 'en'
+defaultContentLanguageInSubdir = true
+markup.goldmark.renderer.unsafe = true
+
+[languages]
+[languages.en]
+weight = 1
+[languages.sv]
+weight = 2
+-- content/inc/i1.md --
+---
+headless: true
+sites:
+  matrix:
+    languages:
+      - '**'	
+---
+{{% sc1 %}}
+-- content/inc/i2.md --
+---
+headless: true
+sites:
+  matrix:
+    languages:
+      - '**'	
+---
+{{% sc2 %}}
+-- content/p1.md --
+---
+title: p1
+---
+P1.
+{{% inc %}}
+-- content/p1.sv.md --
+---
+title: p1 sv
+---
+P1.
+{{% inc %}}
+-- layouts/_shortcodes/sc1.html --
+sc1
+-- layouts/_shortcodes/sc2.html --
+sc2
+-- layouts/_shortcodes/inc.html --
+{{ with site.GetPage "inc/i1.md" }}i1.RenderShortcodes: {{ .RenderShortcodes }}{{ end }}
+-- layouts/_shortcodes/inc.sv.html --
+{{ with site.GetPage "inc/i2.md" }}i1.RenderShortcodes: {{ .RenderShortcodes }}{{ end }}
+-- layouts/all.html --
+Content: {{ .Content }}|sc1: {{ .HasShortcode "sc1" }}|sc2: {{ .HasShortcode "sc2" }}|inc: {{ .HasShortcode "inc" }}|
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/en/p1/index.html", " |sc1: true|sc2: false|inc: true|")
+	b.AssertFileContent("public/sv/p1/index.html", " |sc1: false|sc2: true|inc: true|")
 }
